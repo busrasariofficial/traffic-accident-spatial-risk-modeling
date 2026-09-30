@@ -1,0 +1,17 @@
+pandas
+numpy
+geopandas
+matplotlib
+scipy
+scikit-learn
+joblib
+osmnx
+networkx
+shapely
+pyproj
+libpysal
+esda
+splot
+folium
+streamlit
+streamlit-folium

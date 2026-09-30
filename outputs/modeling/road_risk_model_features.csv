@@ -1,0 +1,16 @@
+Feature,Feature_Type
+log_segment_length,Numeric
+road_hierarchy,Numeric
+is_major_road,Numeric
+has_road_name,Numeric
+is_oneway,Numeric
+is_bridge,Numeric
+is_tunnel,Numeric
+maxspeed_numeric,Numeric
+maxspeed_missing,Numeric
+high_speed_osm,Numeric
+mean_node_degree,Numeric
+max_node_degree,Numeric
+degree_difference,Numeric
+touches_dead_end,Numeric
+highway_clean,Categorical
