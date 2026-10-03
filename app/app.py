@@ -31,8 +31,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RISK_FILE = (
     PROJECT_ROOT
     / "data"
-    / "processed"
-    / "london_road_risk_scores.gpkg"
+    / "deployment"
+    / "london_road_risk_web.gpkg"
 )
 
 
@@ -79,13 +79,25 @@ st.markdown(
 @st.cache_data(show_spinner="Loading road risk data...")
 def load_data():
 
+    if not RISK_FILE.exists():
+        st.error(
+            "Deployment dataset could not be found.\n\n"
+            f"Expected path: {RISK_FILE}"
+        )
+        st.stop()
+
     roads = gpd.read_file(
         RISK_FILE,
-        layer="road_risk_scores"
+        layer="road_risk_web"
     )
 
-    # Leaflet / Folium uses WGS84.
-    roads = roads.to_crs(epsg=4326)
+    # Leaflet / Folium requires WGS84.
+    if roads.crs is None:
+        st.error("Road dataset does not contain CRS information.")
+        st.stop()
+
+    if roads.crs.to_epsg() != 4326:
+        roads = roads.to_crs(epsg=4326)
 
     return roads
 
@@ -113,26 +125,43 @@ st.caption(
 st.sidebar.header("Map Controls")
 
 
-risk_options = st.sidebar.multiselect(
-    "Risk Category",
-    options=[
+available_risk_categories = [
+    category
+    for category in [
         "Critical",
         "High",
         "Moderate",
         "Low"
-    ],
+    ]
+    if category in roads["risk_category"].astype(str).unique()
+]
+
+
+risk_options = st.sidebar.multiselect(
+    "Risk Category",
+    options=available_risk_categories,
     default=[
-        "Critical",
-        "High"
+        category
+        for category in [
+            "Critical",
+            "High"
+        ]
+        if category in available_risk_categories
     ]
 )
 
 
+# Deployment dataset contains the top 20% risk roads.
+min_available_risk = int(
+    roads["risk_percentile"]
+    .min()
+)
+
 min_risk = st.sidebar.slider(
     "Minimum Risk Percentile",
-    min_value=0,
+    min_value=min_available_risk,
     max_value=100,
-    value=80,
+    value=max(80, min_available_risk),
     step=1
 )
 
@@ -219,15 +248,30 @@ if only_severe_roads:
 total_segments = len(filtered)
 
 total_collisions = int(
-    filtered["collision_count"].sum()
+    pd.to_numeric(
+        filtered["collision_count"],
+        errors="coerce"
+    )
+    .fillna(0)
+    .sum()
 )
 
 severe_collisions = int(
-    filtered["severe_collision_count"].sum()
+    pd.to_numeric(
+        filtered["severe_collision_count"],
+        errors="coerce"
+    )
+    .fillna(0)
+    .sum()
 )
 
 fatal_collisions = int(
-    filtered["fatal_collision_count"].sum()
+    pd.to_numeric(
+        filtered["fatal_collision_count"],
+        errors="coerce"
+    )
+    .fillna(0)
+    .sum()
 )
 
 
@@ -374,6 +418,7 @@ if not map_data.empty:
         "highway_clean",
         "risk_category",
         "risk_percentile",
+        "risk_score",
         "risk_score_raw",
         "collision_count",
         "severe_collision_count",
@@ -381,13 +426,11 @@ if not map_data.empty:
         "geometry"
     ]
 
-
     display_columns = [
         column
         for column in display_columns
         if column in map_data.columns
     ]
-
 
     map_display = map_data[
         display_columns
@@ -441,6 +484,18 @@ if not map_data.empty:
         )
 
 
+    if "risk_score" in map_display.columns:
+
+        map_display["risk_score"] = (
+            pd.to_numeric(
+                map_display["risk_score"],
+                errors="coerce"
+            )
+            .fillna(0)
+            .round(3)
+        )
+
+
     if "risk_score_raw" in map_display.columns:
 
         map_display["risk_score_raw"] = (
@@ -490,23 +545,17 @@ if not map_data.empty:
             "#808080"
         )
 
-
         if category == "Critical":
-
             weight = 4.0
 
         elif category == "High":
-
             weight = 3.0
 
         elif category == "Moderate":
-
             weight = 2.5
 
         else:
-
             weight = 2.0
-
 
         return {
             "color": color,
@@ -532,18 +581,10 @@ if not map_data.empty:
 
 
     tooltip_alias_map = {
-
-        "name":
-            "Road:",
-
-        "highway_clean":
-            "Road Type:",
-
-        "risk_category":
-            "Risk Category:",
-
-        "risk_percentile":
-            "Risk Percentile:"
+        "name": "Road:",
+        "highway_clean": "Road Type:",
+        "risk_category": "Risk Category:",
+        "risk_percentile": "Risk Percentile:"
     }
 
 
@@ -557,47 +598,45 @@ if not map_data.empty:
     # POPUP
     # ========================================================
 
-    popup_fields = [
-        column
-        for column in [
-            "name",
-            "highway_clean",
-            "risk_category",
-            "risk_percentile",
-            "risk_score_raw",
+    popup_candidates = [
+        "name",
+        "highway_clean",
+        "risk_category",
+        "risk_percentile"
+    ]
+
+    if "risk_score" in map_display.columns:
+        popup_candidates.append("risk_score")
+
+    elif "risk_score_raw" in map_display.columns:
+        popup_candidates.append("risk_score_raw")
+
+    popup_candidates.extend(
+        [
             "collision_count",
             "severe_collision_count",
             "fatal_collision_count"
         ]
+    )
+
+
+    popup_fields = [
+        column
+        for column in popup_candidates
         if column in map_display.columns
     ]
 
 
     popup_alias_map = {
-
-        "name":
-            "Road:",
-
-        "highway_clean":
-            "Road Type:",
-
-        "risk_category":
-            "Risk Category:",
-
-        "risk_percentile":
-            "Risk Percentile:",
-
-        "risk_score_raw":
-            "Model Risk Score:",
-
-        "collision_count":
-            "Observed Collisions:",
-
-        "severe_collision_count":
-            "Severe Collisions:",
-
-        "fatal_collision_count":
-            "Fatal Collisions:"
+        "name": "Road:",
+        "highway_clean": "Road Type:",
+        "risk_category": "Risk Category:",
+        "risk_percentile": "Risk Percentile:",
+        "risk_score": "Model Risk Score:",
+        "risk_score_raw": "Model Risk Score:",
+        "collision_count": "Observed Collisions:",
+        "severe_collision_count": "Severe Collisions:",
+        "fatal_collision_count": "Fatal Collisions:"
     }
 
 
@@ -612,41 +651,26 @@ if not map_data.empty:
     # ========================================================
 
     road_layer = folium.GeoJson(
-
         data=map_display.to_json(),
-
         name="Road Risk",
-
         style_function=road_style,
-
         highlight_function=lambda feature: {
             "weight": 6,
             "opacity": 1
         },
-
         tooltip=folium.GeoJsonTooltip(
-
             fields=tooltip_fields,
-
             aliases=tooltip_aliases,
-
             sticky=False,
-
             labels=True
         ),
-
         popup=folium.GeoJsonPopup(
-
             fields=popup_fields,
-
             aliases=popup_aliases,
-
             localize=True,
-
             labels=True
         )
     )
-
 
     road_layer.add_to(m)
 
@@ -851,6 +875,7 @@ table_columns = [
     "highway_clean",
     "risk_category",
     "risk_percentile",
+    "risk_score",
     "risk_score_raw",
     "collision_count",
     "severe_collision_count",
@@ -882,32 +907,26 @@ if not filtered.empty:
 
     top_roads = top_roads.rename(
         columns={
-
-            "name":
-                "Road",
-
-            "highway_clean":
-                "Road Type",
-
-            "risk_category":
-                "Risk Category",
-
-            "risk_percentile":
-                "Risk Percentile",
-
-            "risk_score_raw":
-                "Model Risk Score",
-
-            "collision_count":
-                "Collisions",
-
-            "severe_collision_count":
-                "Severe",
-
-            "fatal_collision_count":
-                "Fatal"
+            "name": "Road",
+            "highway_clean": "Road Type",
+            "risk_category": "Risk Category",
+            "risk_percentile": "Risk Percentile",
+            "risk_score": "Model Risk Score",
+            "risk_score_raw": "Model Risk Score",
+            "collision_count": "Collisions",
+            "severe_collision_count": "Severe",
+            "fatal_collision_count": "Fatal"
         }
     )
+
+
+    # Avoid duplicate model-score columns if both exist.
+    if top_roads.columns.duplicated().any():
+
+        top_roads = top_roads.loc[
+            :,
+            ~top_roads.columns.duplicated()
+        ]
 
 
     st.dataframe(
@@ -963,6 +982,13 @@ probability that a future collision will occur.
 - **High:** 80th–95th percentile
 - **Moderate:** 50th–80th percentile
 - **Low:** Bottom 50%
+
+### Web Deployment Dataset
+
+For interactive web performance, the deployed application
+contains road segments in the top 20% of the model's risk
+distribution. The complete analytical pipeline evaluates the
+full London road network.
         """
     )
 
